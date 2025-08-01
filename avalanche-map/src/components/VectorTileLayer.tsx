@@ -3,6 +3,26 @@ import { useMap } from 'react-leaflet';
 import * as L from 'leaflet';
 import 'leaflet.vectorgrid';
 
+function getCenterOfFeature(feature) {
+   const coords = feature.geometry.coordinates.flat(Infinity); // alle Punkte extrahieren
+
+   let sumLng = 0;
+   let sumLat = 0;
+
+   coords.forEach(coord => {
+      sumLng += coord[0];
+      sumLat += coord[1];
+   });
+
+   const center = [
+      sumLng / coords.length,
+      sumLat / coords.length
+   ];
+
+   return center; // [lng, lat]
+}
+
+
 // Define the interface for the filter props
 interface FilterProps {
    category: 'Gefahrenstufe' | 'Lawinenprobleme';
@@ -52,9 +72,9 @@ function isCurrentFeature(properties: any, today = new Date().toISOString().subs
 function getColorForCount(count: number, max: number): string {
    // Color scale from light yellow to dark red
    const intensity = Math.min(Math.max(count / max, 0), 1);
-   
+
    if (count === 0) return '#ffffff'; // White for zero count
-   
+
    // Color scale from yellow to orange to red
    if (intensity < 0.25) return '#ffffb2';
    if (intensity < 0.5) return '#fecc5c';
@@ -62,11 +82,19 @@ function getColorForCount(count: number, max: number): string {
    return '#e31a1c';
 }
 
+// Interface for region center coordinates
+interface RegionCenter {
+   code: string;
+   center: [number, number];
+}
+
 const VectorTileLayer: React.FC<VectorTileLayerProps> = ({ filter }) => {
    const map = useMap();
    const vectorLayerRef = useRef<L.Layer | null>(null);
+   const markersLayerRef = useRef<L.LayerGroup | null>(null);
    const [regionSummaries, setRegionSummaries] = useState<RegionSummary[]>([]);
    const [maxCounts, setMaxCounts] = useState<{ [key: string]: number }>({});
+   const [regionCenters, setRegionCenters] = useState<RegionCenter[]>([]);
 
    // Load region summary data
    useEffect(() => {
@@ -75,11 +103,14 @@ const VectorTileLayer: React.FC<VectorTileLayerProps> = ({ filter }) => {
             const response = await fetch('/region_summary.json');
             const data: RegionSummary[] = await response.json();
             setRegionSummaries(data);
-            
+
             // Calculate max counts for each category
             const maxRatingCounts: { [key: string]: number } = {};
             const maxProblemCounts: { [key: string]: number } = {};
-            
+
+            // Create an array to store region centers
+            const centers: RegionCenter[] = [];
+
             // Find max values for each rating and problem type
             data.forEach(region => {
                // Process rating counts
@@ -88,7 +119,7 @@ const VectorTileLayer: React.FC<VectorTileLayerProps> = ({ filter }) => {
                      maxRatingCounts[rating] = count;
                   }
                });
-               
+
                // Process avalanche problem counts
                Object.entries(region.avalanche_problem_counts).forEach(([problem, count]) => {
                   if (!maxProblemCounts[problem] || count > maxProblemCounts[problem]) {
@@ -96,18 +127,107 @@ const VectorTileLayer: React.FC<VectorTileLayerProps> = ({ filter }) => {
                   }
                });
             });
-            
+
             setMaxCounts({
                ...maxRatingCounts,
                ...maxProblemCounts
             });
+
+            // Fetch region geometries to get centers
+            try {
+               const geoResponse = await fetch('https://static.avalanche.report/eaws_pbf/metadata.json');
+               const geoData = await geoResponse.json();
+
+               // Extract region centers from metadata
+               if (geoData && geoData.regions) {
+                  const extractedCenters = Object.entries(geoData.regions).map(([code, region]: [string, any]) => {
+                     // Use region center if available, otherwise use a default position
+                     const center = region.center ?
+                        [region.center.lat, region.center.lng] as [number, number] :
+                        [0, 0] as [number, number];
+
+                     return { code, center };
+                  });
+
+                  setRegionCenters(extractedCenters);
+               }
+            } catch (geoError) {
+               console.error('Error fetching region geometries:', geoError);
+            }
          } catch (error) {
             console.error('Error fetching region summary data:', error);
          }
       };
-      
+
       fetchRegionSummary();
    }, []);
+
+   // Function to create text markers for each region
+   const createTextMarkers = () => {
+      // Remove existing markers layer if it exists
+      if (markersLayerRef.current) {
+         map.removeLayer(markersLayerRef.current);
+      }
+
+      // Create a new layer group for markers
+      const markersLayer = L.layerGroup();
+
+      // Only create markers if we have region data and centers
+      if (regionSummaries.length > 0 && regionCenters.length > 0) {
+         regionSummaries.forEach(region => {
+            // Find the center coordinates for this region
+            const regionCenter = regionCenters.find(rc => rc.code === region.code);
+            if (!regionCenter || regionCenter.center[0] === 0) return; // Skip if no valid center
+
+            // Determine count based on filter
+            let count = 0;
+
+            if (filter.category === 'Gefahrenstufe' && filter.value !== 'alle') {
+               count = region.rating_counts[filter.value] || 0;
+            } else if (filter.category === 'Lawinenprobleme' && filter.value !== 'alle') {
+               const problemKey = avalancheProblemMapping[filter.value];
+               if (problemKey) {
+                  count = region.avalanche_problem_counts[problemKey] || 0;
+               }
+            }
+
+            // Only create marker if count > 0
+            if (count > 0) {
+               // Create a custom divIcon with the count
+               const countIcon = L.divIcon({
+                  className: 'count-marker',
+                  html: `<div style="
+                           background-color: white;
+                           border: 2px solid black;
+                           border-radius: 50%;
+                           width: 24px;
+                           height: 24px;
+                           display: flex;
+                           justify-content: center;
+                           align-items: center;
+                           font-weight: bold;
+                           font-size: 12px;
+                       ">${count}</div>`,
+                  iconSize: [24, 24],
+                  iconAnchor: [12, 12]
+               });
+
+               // Create marker and add to layer
+               const marker = L.marker(regionCenter.center as L.LatLngExpression, {
+                  icon: countIcon,
+                  interactive: false, // Don't capture mouse events
+                  zIndexOffset: 1000 // Ensure it's above the vector layer
+               });
+
+               marker.addTo(markersLayer);
+            }
+         });
+      }
+
+      // Add markers layer to map and store reference
+      markersLayer.addTo(map);
+      markersLayerRef.current = markersLayer;
+   };
 
    useEffect(() => {
       // Function to fetch metadata and create the vector layer
@@ -144,7 +264,7 @@ const VectorTileLayer: React.FC<VectorTileLayerProps> = ({ filter }) => {
                         if (!isCurrentFeature(properties) || !consideredRegion) {
                            return { fill: false, stroke: false };
                         }
-
+                        //console.log(properties)
                         // Find the region summary data for this region
                         const regionData = regionSummaries.find(r => r.code === properties.id);
                         if (!regionData) {
@@ -197,11 +317,13 @@ const VectorTileLayer: React.FC<VectorTileLayerProps> = ({ filter }) => {
                   getFeatureId: (feature: any) => feature.properties.id,
                   // Add tooltip to show count on hover
                   onEachFeature: (feature: any, layer: any) => {
+                     console.log("on each feature ")
+                     console.log(feature.properties)
                      if (feature.properties) {
                         const regionData = regionSummaries.find(r => r.code === feature.properties.id);
                         if (regionData) {
                            let tooltipContent = `<b>${regionData.name}</b> (${regionData.code})`;
-                           
+
                            if (filter.category === 'Gefahrenstufe' && filter.value !== 'alle') {
                               const count = regionData.rating_counts[filter.value] || 0;
                               tooltipContent += `<br>Gefahrenstufe ${filter.value}: ${count}`;
@@ -212,10 +334,27 @@ const VectorTileLayer: React.FC<VectorTileLayerProps> = ({ filter }) => {
                                  tooltipContent += `<br>${filter.value}: ${count}`;
                               }
                            }
-                           
+
                            layer.bindTooltip(tooltipContent);
                         }
                      }
+
+                     // 🧷 Marker auf Zentrum setzen
+                     const marker = L.marker(center, {
+                        icon: L.divIcon({
+                           className: 'region-marker',
+                           html: '📍',
+                           iconSize: [20, 20],
+                           iconAnchor: [10, 10]
+                        })
+                     }).addTo(map);
+
+                     // 🗨️ Popup dranbinden
+                     marker.bindPopup(popupContent);
+
+                     // Optional auch das Layer selbst mit Tooltip
+                     console.log("POPUP")
+                     layer.bindTooltip(popupContent);
                   }
                }
             );
@@ -223,6 +362,9 @@ const VectorTileLayer: React.FC<VectorTileLayerProps> = ({ filter }) => {
             // Add the layer to the map and store the reference
             vectorGrid.addTo(map);
             vectorLayerRef.current = vectorGrid;
+
+            // Create text markers after vector layer is added
+            createTextMarkers();
 
          } catch (error) {
             console.error('Error fetching metadata or creating vector layer:', error);
@@ -239,8 +381,11 @@ const VectorTileLayer: React.FC<VectorTileLayerProps> = ({ filter }) => {
          if (vectorLayerRef.current) {
             map.removeLayer(vectorLayerRef.current);
          }
+         if (markersLayerRef.current) {
+            map.removeLayer(markersLayerRef.current);
+         }
       };
-   }, [map, filter, regionSummaries, maxCounts]); // Re-run when map, filter, or region data changes
+   }, [map, filter, regionSummaries, maxCounts, regionCenters]); // Re-run when map, filter, or region data changes
 
    return null; // This component doesn't render anything
 };
