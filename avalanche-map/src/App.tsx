@@ -3,7 +3,6 @@ import './App.css';
 import AvalancheMap from './components/AvalancheMap';
 import VectorTileLayer from './components/VectorTileLayer';
 import FilterControls from './components/FilterControls';
-import ExportButton from './components/ExportButton';
 
 // Define the interface for the filter props
 interface FilterProps {
@@ -34,8 +33,6 @@ function App() {
       {/* Filter Controls */}
       <FilterControls onFilterChange={handleFilterChange} />
       
-      {/* Export Button */}
-      <ExportButton />
     </div>
   );
 }
