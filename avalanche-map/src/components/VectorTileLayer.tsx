@@ -8,7 +8,9 @@ import Feature from "ol/Feature";
 import MVT from "ol/format/MVT";
 import Point from "ol/geom/Point";
 import { Style, Fill, Stroke, Text } from "ol/style";
-import { transformExtent, transform } from "ol/proj";
+import { transformExtent } from "ol/proj";
+import TileGrid from "ol/tilegrid/TileGrid";
+import Tile from "ol/VectorTile";
 
 interface Props {
   filter: {
@@ -61,6 +63,8 @@ const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
       url: "https://static.avalanche.report/eaws_pbf/{z}/{x}/{y}.pbf",
     });
 
+    const idToCenterMap = new Map<string, [number, number]>();
+
     const vectorTileLayer = new VectorTileLayer({
       source: vectorTileSource,
       style: (feature) => {
@@ -74,6 +78,7 @@ const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
           id?.startsWith("IT-2") ||
           id?.startsWith("IT-3") ||
           id?.startsWith("IT-5");
+
         if (props.layer === "outline") {
           return new Style({
             stroke: new Stroke({ color: "#000000", width: 2 }),
@@ -90,16 +95,15 @@ const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
 
         const regionData = regionSummaries.find((r) => r.code === id);
         let fillColor = "#ffffff";
-        let fillOpacity = 1;
-        let count = 0;
 
         if (regionData) {
+          let count = 0;
+
           if (filter.category === "Gefahrenstufe" && filter.value !== "alle") {
             count = regionData.rating_counts[filter.value] || 0;
             const max = maxCounts[filter.value] || 1;
             if (count) {
               fillColor = getColorForCount(count, max);
-              fillOpacity = 0.7;
             }
           } else if (
             filter.category === "Lawinenprobleme" &&
@@ -111,7 +115,6 @@ const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
               const max = maxCounts[key] || 1;
               if (count) {
                 fillColor = getColorForCount(count, max);
-                fillOpacity = 0.7;
               }
             }
           }
@@ -121,6 +124,8 @@ const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
           return new Style({});
         }
 
+        console.log(idToCenterMap.get(id));
+
         return new Style({
           fill: new Fill({ color: fillColor }),
           stroke: new Stroke({ color: "#000000", width: 1 }),
@@ -128,92 +133,32 @@ const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
       },
     });
 
-    const markerSource = new VectorSource();
-    const markerLayer = new VectorLayer({
-      source: markerSource,
-    });
-
     map.addLayer(vectorTileLayer);
-    map.addLayer(markerLayer);
 
-    // Marker erstellen, sobald Tiles geladen sind
-    vectorTileSource.on("tileloadend", () => {
-      markerSource.clear();
-      const extent = transformExtent(
-        map.getView().calculateExtent(),
-        map.getView().getProjection(),
-        "EPSG:3857"
-      );
-      const features = vectorTileSource.getFeaturesInExtent(extent);
-
-      if (!features) return;
+    const handleTileLoad = (event) => {
+      const tile = event.tile;
+      const features = tile.getFeatures(); // <- hier kommst du ran!
 
       features.forEach((feature) => {
         const props = feature.getProperties();
         const id = props.id;
 
-        const consideredRegion =
-          id?.startsWith("AT") ||
-          id?.startsWith("CH") ||
-          id?.startsWith("DE") ||
-          id?.startsWith("IT-2") ||
-          id?.startsWith("IT-3") ||
-          id?.startsWith("IT-5");
-        if (
-          props.layer !== "micro-regions" ||
-          !isCurrentFeature(props) ||
-          !consideredRegion
-        ) {
-          return;
-        }
-
-        const regionData = regionSummaries.find((r) => r.code === id);
-        if (!regionData) return;
-
-        let count = 0;
-        let max = 1;
-
-        if (filter.category === "Gefahrenstufe" && filter.value !== "alle") {
-          count = regionData.rating_counts[filter.value] || 0;
-          max = maxCounts[filter.value] || 1;
-        } else if (
-          filter.category === "Lawinenprobleme" &&
-          filter.value !== "alle"
-        ) {
-          const key = avalancheProblemMapping[filter.value];
-          if (key) {
-            count = regionData.avalanche_problem_counts[key] || 0;
-            max = maxCounts[key] || 1;
+        if (id && !idToCenterMap.has(id)) {
+          const geometry = feature.getGeometry();
+          if (geometry) {
+            const extent = geometry.getExtent(); // [minX, minY, maxX, maxY]
+            const centerX = (extent[0] + extent[2]) / 2;
+            const centerY = (extent[1] + extent[3]) / 2;
+            idToCenterMap.set(id, [centerX, centerY]);
           }
         }
-
-        if (count === 0) return;
-
-        const geom = feature.getGeometry();
-        const center = geom.getInteriorPoint().getCoordinates();
-
-        const pointFeature = new Feature({
-          geometry: new Point(center),
-        });
-
-        pointFeature.setStyle(
-          new Style({
-            text: new Text({
-              text: `${count}/${max}`,
-              font: "bold 12px sans-serif",
-              fill: new Fill({ color: "#000000" }),
-              stroke: new Stroke({ color: "#ffffff", width: 2 }),
-            }),
-          })
-        );
-
-        markerSource.addFeature(pointFeature);
       });
-    });
+    };
+
+    vectorTileSource.on("tileloadend", handleTileLoad);
 
     return () => {
       map.removeLayer(vectorTileLayer);
-      map.removeLayer(markerLayer);
     };
   }, [map, filter, regionSummaries, maxCounts]);
 
