@@ -1,16 +1,10 @@
 import React, { useEffect } from "react";
 import { useMap } from "./AvalancheMap";
+import { getColorForCount } from "../colorUtils";
 import VectorTileLayer from "ol/layer/VectorTile";
 import VectorTileSource from "ol/source/VectorTile";
-import VectorSource from "ol/source/Vector";
-import VectorLayer from "ol/layer/Vector";
-import Feature from "ol/Feature";
 import MVT from "ol/format/MVT";
-import Point from "ol/geom/Point";
-import { Style, Fill, Stroke, Text } from "ol/style";
-import { transformExtent } from "ol/proj";
-import TileGrid from "ol/tilegrid/TileGrid";
-import Tile from "ol/VectorTile";
+import { Style, Fill, Stroke } from "ol/style";
 
 interface Props {
   filter: {
@@ -39,16 +33,7 @@ function isCurrentFeature(
   );
 }
 
-function getColorForCount(count: number, max: number): string {
-  const intensity = Math.min(Math.max(count / max, 0), 1);
-  if (count === 0) return "#ffffff";
-  if (intensity < 0.25) return "#ffffb2";
-  if (intensity < 0.5) return "#fecc5c";
-  if (intensity < 0.75) return "#fd8d3c";
-  return "#e31a1c";
-}
-
-const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
+const OpenLayersVectorTileLayer: React.FC<Props> = ({
   filter,
   regionSummaries,
   maxCounts,
@@ -62,8 +47,6 @@ const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
       format: new MVT(),
       url: "https://static.avalanche.report/eaws_pbf/{z}/{x}/{y}.pbf",
     });
-
-    const idToCenterMap = new Map<string, [number, number]>();
 
     const vectorTileLayer = new VectorTileLayer({
       source: vectorTileSource,
@@ -95,13 +78,13 @@ const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
 
         const regionData = regionSummaries.find((r) => r.code === id);
         let fillColor = "#ffffff";
+        let count = 0;
+        let max = 1;
 
         if (regionData) {
-          let count = 0;
-
           if (filter.category === "Gefahrenstufe" && filter.value !== "alle") {
             count = regionData.rating_counts[filter.value] || 0;
-            const max = maxCounts[filter.value] || 1;
+            max = 210; //maxCounts[filter.value] || 1;
             if (count) {
               fillColor = getColorForCount(count, max);
             }
@@ -112,7 +95,7 @@ const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
             const key = avalancheProblemMapping[filter.value];
             if (key) {
               count = regionData.avalanche_problem_counts[key] || 0;
-              const max = maxCounts[key] || 1;
+              max = 210; //maxCounts[key] || 1;
               if (count) {
                 fillColor = getColorForCount(count, max);
               }
@@ -124,8 +107,6 @@ const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
           return new Style({});
         }
 
-        console.log(idToCenterMap.get(id));
-
         return new Style({
           fill: new Fill({ color: fillColor }),
           stroke: new Stroke({ color: "#000000", width: 1 }),
@@ -133,29 +114,21 @@ const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
       },
     });
 
-    map.addLayer(vectorTileLayer);
+    const handleMapClick = (event) => {
+      const coords = event.coordinate; // [x, y] in EPSG:3857
+      console.log("Klick-Koordinaten (EPSG:3857):", coords);
 
-    const handleTileLoad = (event) => {
-      const tile = event.tile;
-      const features = tile.getFeatures(); // <- hier kommst du ran!
-
-      features.forEach((feature) => {
-        const props = feature.getProperties();
-        const id = props.id;
-
-        if (id && !idToCenterMap.has(id)) {
-          const geometry = feature.getGeometry();
-          if (geometry) {
-            const extent = geometry.getExtent(); // [minX, minY, maxX, maxY]
-            const centerX = (extent[0] + extent[2]) / 2;
-            const centerY = (extent[1] + extent[3]) / 2;
-            idToCenterMap.set(id, [centerX, centerY]);
-          }
-        }
+      // Optional: Umwandlung in Längen-/Breitengrad (EPSG:4326)
+      import("ol/proj").then(({ toLonLat }) => {
+        const [lon, lat] = toLonLat(coords);
+        console.log(
+          `Längengrad: ${lon.toFixed(6)}, Breitengrad: ${lat.toFixed(6)}`
+        );
       });
     };
 
-    vectorTileSource.on("tileloadend", handleTileLoad);
+    map.on("click", handleMapClick);
+    map.addLayer(vectorTileLayer);
 
     return () => {
       map.removeLayer(vectorTileLayer);
@@ -165,4 +138,4 @@ const OpenLayersVectorTileLayerWithMarkers: React.FC<Props> = ({
   return null;
 };
 
-export default OpenLayersVectorTileLayerWithMarkers;
+export default OpenLayersVectorTileLayer;

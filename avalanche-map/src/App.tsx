@@ -1,21 +1,22 @@
 // App.tsx
-import { useState, useEffect } from 'react';
-import './App.css';
-import AvalancheMap from './components/AvalancheMap';
-import OpenLayersVectorTileLayerWithMarkers from './components/VectorTileLayer';
-import FilterControls from './components/FilterControls';
+import { useState, useEffect } from "react";
+import "./App.css";
+import AvalancheMap from "./components/AvalancheMap";
+import MapLegend from "./components/Legend";
+import OpenLayersVectorTileLayer from "./components/VectorTileLayer";
+import FilterControls from "./components/FilterControls";
 
 // Define the interface for the filter props
 interface FilterProps {
-  category: 'Gefahrenstufe' | 'Lawinenprobleme';
+  category: "Gefahrenstufe" | "Lawinenprobleme";
   value: string;
 }
 
 function App() {
   // State for the filter
   const [filter, setFilter] = useState<FilterProps>({
-    category: 'Gefahrenstufe',
-    value: 'alle'
+    category: "Gefahrenstufe",
+    value: "alle",
   });
 
   const [regionSummaries, setRegionSummaries] = useState<any[]>([]);
@@ -24,30 +25,35 @@ function App() {
   useEffect(() => {
     const fetchRegionSummary = async () => {
       try {
-        const response = await fetch('/region_summary.json');
+        const response = await fetch("/region_summary.json");
         const data: any[] = await response.json();
         setRegionSummaries(data);
 
         const maxRatingCounts: { [key: string]: number } = {};
         const maxProblemCounts: { [key: string]: number } = {};
 
-        data.forEach(region => {
+        data.forEach((region) => {
           Object.entries(region.rating_counts).forEach(([rating, count]) => {
             if (!maxRatingCounts[rating] || count > maxRatingCounts[rating]) {
               maxRatingCounts[rating] = count;
             }
           });
 
-          Object.entries(region.avalanche_problem_counts).forEach(([problem, count]) => {
-            if (!maxProblemCounts[problem] || count > maxProblemCounts[problem]) {
-              maxProblemCounts[problem] = count;
+          Object.entries(region.avalanche_problem_counts).forEach(
+            ([problem, count]) => {
+              if (
+                !maxProblemCounts[problem] ||
+                count > maxProblemCounts[problem]
+              ) {
+                maxProblemCounts[problem] = count;
+              }
             }
-          });
+          );
         });
 
         setMaxCounts({ ...maxRatingCounts, ...maxProblemCounts });
       } catch (error) {
-        console.error('Fehler beim Laden von region_summary.json:', error);
+        console.error("Fehler beim Laden von region_summary.json:", error);
       }
     };
 
@@ -64,13 +70,13 @@ function App() {
       {/* Main Map Component */}
       <AvalancheMap>
         {/* Vector Tile Layer with filter and data */}
-        <OpenLayersVectorTileLayerWithMarkers 
-          filter={filter} 
-          regionSummaries={regionSummaries} 
-          maxCounts={maxCounts} 
+        <OpenLayersVectorTileLayer
+          filter={filter}
+          regionSummaries={regionSummaries}
+          maxCounts={maxCounts}
         />
       </AvalancheMap>
-
+      <MapLegend filter={filter} />
       {/* Filter Controls */}
       <FilterControls onFilterChange={handleFilterChange} />
     </div>
