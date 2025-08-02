@@ -1,50 +1,61 @@
-import { useEffect } from 'react';
-import { MapContainer, TileLayer } from 'react-leaflet';
-import 'leaflet/dist/leaflet.css';
-import * as L from 'leaflet';
+// AvalancheMap.tsx
+import React, { useEffect, useRef, useState, createContext, useContext } from 'react';
+import 'ol/ol.css';
+import Map from 'ol/Map';
+import View from 'ol/View';
+import { fromLonLat } from 'ol/proj';
+import TileLayer from 'ol/layer/Tile';
+import XYZ from 'ol/source/XYZ';
+import { defaults as defaultControls } from 'ol/control';
 
-// Define the center of the map based on the metadata
-const DEFAULT_CENTER: [number, number] = [47.0, 10.0]; // Approximate center of the Alps
+// Map context for child components
+const MapContext = createContext<Map | null>(null);
+export const useMap = () => useContext(MapContext);
+
+const DEFAULT_CENTER: [number, number] = [10.0, 47.0];
 const DEFAULT_ZOOM = 6;
 
 interface AvalancheMapProps {
   children?: React.ReactNode;
 }
 
-// This is needed to make TypeScript happy with the props we're passing to MapContainer and TileLayer
-const MapContainerWithProps = MapContainer as any;
-const TileLayerWithProps = TileLayer as any;
-
 const AvalancheMap: React.FC<AvalancheMapProps> = ({ children }) => {
-  // Initialize Leaflet map
+  const mapRef = useRef<HTMLDivElement | null>(null);
+  const [mapInstance, setMapInstance] = useState<Map | null>(null);
+
   useEffect(() => {
-    // Fix for default marker icons in Leaflet
-    delete (L.Icon.Default.prototype as any)._getIconUrl;
-    
-    L.Icon.Default.mergeOptions({
-      iconRetinaUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png',
-      iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png',
-      shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
+    if (!mapRef.current) return;
+
+    const baseLayer = new TileLayer({
+      source: new XYZ({
+        url: 'https://static.avalanche.report/tms/{z}/{x}/{y}.webp',
+        attributions: '© Avalanche.report',
+      }),
     });
+
+    const map = new Map({
+      target: mapRef.current,
+      layers: [baseLayer],
+      view: new View({
+        center: fromLonLat(DEFAULT_CENTER),
+        zoom: DEFAULT_ZOOM,
+      }),
+      controls: defaultControls(),
+    });
+
+    setMapInstance(map);
+
+    return () => {
+      map.setTarget(null);
+    };
   }, []);
 
   return (
-    <div className="map-container" style={{ height: '100vh', width: '100%' }}>
-      <MapContainerWithProps
-        center={DEFAULT_CENTER}
-        zoom={DEFAULT_ZOOM}
-        style={{ height: '100%', width: '100%' }}
-      >
-        {/* Base Map Layer */}
-        <TileLayerWithProps
-          url="https://static.avalanche.report/tms/{z}/{x}/{y}.webp"
-          attribution="© Avalanche.report"
-        />
-        
-        {/* Children will include the VectorTileLayer component */}
+    <MapContext.Provider value={mapInstance}>
+      <div ref={mapRef} className="map-container" style={{ height: '100vh', width: '100%' }}>
         {children}
-      </MapContainerWithProps>
-    </div>
+      </div>
+    </MapContext.Provider>
   );
 };
 
