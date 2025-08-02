@@ -4,6 +4,8 @@ import "./App.css";
 import AvalancheMap from "./components/AvalancheMap";
 import MapLegend from "./components/Legend";
 import OpenLayersVectorTileLayer from "./components/VectorTileLayer";
+import CountryVectorTileLayer from "./components/CountryVectorTileLayer";
+import PieChartLayer from "./components/PieChartLayer";
 import FilterControls from "./components/FilterControls";
 
 // Define the interface for the filter props
@@ -19,14 +21,22 @@ function App() {
     value: "alle",
   });
 
-  const [regionSummaries, setRegionSummaries] = useState<any[]>([]);
+  // Define the interface for region summaries
+  interface RegionSummary {
+    code: string;
+    name: string;
+    rating_counts: { [key: string]: number };
+    avalanche_problem_counts: { [key: string]: number };
+  }
+
+  const [regionSummaries, setRegionSummaries] = useState<RegionSummary[]>([]);
   const [maxCounts, setMaxCounts] = useState<{ [key: string]: number }>({});
 
   useEffect(() => {
     const fetchRegionSummary = async () => {
       try {
         const response = await fetch("/region_summary.json");
-        const data: any[] = await response.json();
+        const data = (await response.json()) as RegionSummary[];
         setRegionSummaries(data);
 
         const maxRatingCounts: { [key: string]: number } = {};
@@ -34,18 +44,23 @@ function App() {
 
         data.forEach((region) => {
           Object.entries(region.rating_counts).forEach(([rating, count]) => {
-            if (!maxRatingCounts[rating] || count > maxRatingCounts[rating]) {
-              maxRatingCounts[rating] = count;
+            const countValue = count as number;
+            if (
+              !maxRatingCounts[rating] ||
+              countValue > maxRatingCounts[rating]
+            ) {
+              maxRatingCounts[rating] = countValue;
             }
           });
 
           Object.entries(region.avalanche_problem_counts).forEach(
             ([problem, count]) => {
+              const countValue = count as number;
               if (
                 !maxProblemCounts[problem] ||
-                count > maxProblemCounts[problem]
+                countValue > maxProblemCounts[problem]
               ) {
-                maxProblemCounts[problem] = count;
+                maxProblemCounts[problem] = countValue;
               }
             }
           );
@@ -69,12 +84,23 @@ function App() {
     <div className="app-container">
       {/* Main Map Component */}
       <AvalancheMap>
-        {/* Vector Tile Layer with filter and data */}
-        <OpenLayersVectorTileLayer
-          filter={filter}
-          regionSummaries={regionSummaries}
-          maxCounts={maxCounts}
-        />
+        {/* Conditionally render the appropriate Vector Tile Layer */}
+        {filter.value === "alle" ? (
+          <>
+            <CountryVectorTileLayer
+              filter={filter}
+              regionSummaries={regionSummaries}
+              maxCounts={maxCounts}
+            />
+            <PieChartLayer filter={filter} regionSummaries={regionSummaries} />
+          </>
+        ) : (
+          <OpenLayersVectorTileLayer
+            filter={filter}
+            regionSummaries={regionSummaries}
+            maxCounts={maxCounts}
+          />
+        )}
       </AvalancheMap>
       <MapLegend filter={filter} />
       {/* Filter Controls */}
